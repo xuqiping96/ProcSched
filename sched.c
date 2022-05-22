@@ -73,6 +73,8 @@ struct Node *head_waiting_time;
  */
 struct Node *head_sched;
 
+struct Node *cur_task_rr;
+
 //函数区域///////////////////////////////////////////////
 /**
  * @brief 初始化链表头
@@ -213,13 +215,15 @@ int count_node(struct Node *head)
  */
 void update_waiting_time_node(struct Node *head, Task *task, int slice)
 {
-  if(slice == 0)
+  struct Node *cur_node = head;
+  while(cur_node != NULL)
   {
-    struct Node *cur_node = head;
-    while(cur_node != NULL && (strcmp((cur_node->task)->name, task->name) != 0)) {
-      cur_node = cur_node->next;
+    if((strcmp((cur_node->task)->name, task->name)) != 0)
+    {
+      (cur_node->task)->waiting_time += slice;
     }
-    (cur_node->task)->waiting_time = (cur_node->task)->start_time - (cur_node->task)->arrival_time;
+
+    cur_node = cur_node->next;
   }
 }
 
@@ -247,7 +251,6 @@ void print_waiting_time(struct Node *head)
 void print_sched_list(struct Node *head)
 {
   struct Node *cur_node = head;
-  printf("[FCFS]\n");
   printf("Scheduling:\n");
   while(cur_node != NULL)
   {
@@ -271,8 +274,11 @@ void add_task(char *name, int priority, int burst, int arrival_time)
   new_task->priority = priority;
   new_task->burst = burst;
   new_task->arrival_time = arrival_time;
+  new_task->sched_sum = 0;
+  new_task->waiting_time = 0 - arrival_time;
 
   insert_node(&head_task, new_task);
+  insert_node(&head_waiting_time, new_task);
 }
 
 /**
@@ -362,17 +368,17 @@ void schedule_task_fcfs()
     //任务链表按到达时间顺序排列，更新调度链表
     picked_task->start_time = last_end_time;
     picked_task->end_time = picked_task->start_time + picked_task->burst;
+    last_end_time = picked_task->end_time;
+
     Task *new_sched_task = (Task *)malloc(sizeof(Task));
     *new_sched_task = *picked_task;
     insert_node(&head_sched, new_sched_task);
-    last_end_time = picked_task->end_time;
-    picked_task->waiting_time = picked_task->start_time - picked_task->arrival_time;
-    Task *new_waiting_time_task = (Task *)malloc(sizeof(Task));
-    *new_waiting_time_task = *picked_task;
+    
     //更新等待时间链表
-    insert_node(&head_waiting_time, new_waiting_time_task);
-    free(picked_task);
+    picked_task->waiting_time = picked_task->start_time - picked_task->arrival_time;
+
   }
+  printf("[FCFS]\n");
   print_sched_list(head_sched);
   print_waiting_time(head_waiting_time);
 
@@ -421,8 +427,36 @@ bool is_delete_node_rr(int burst) { return (burst <= QUANTUM); }
  */
 Task *pick_next_task_rr()
 {
-  // TODO
-  return NULL;
+  Task *picked_task;
+  struct Node *deleted_node;
+  //取任务链表当前任务
+  if(cur_task_rr == NULL)
+  {
+    return NULL;
+  } else
+  {
+    picked_task = cur_task_rr->task;
+    add_tid(picked_task);
+    if(cur_task_rr->next == NULL)
+    {
+      cur_task_rr = head_task;
+    } else
+    {
+      cur_task_rr = cur_task_rr->next;
+    }
+    if(is_delete_node_rr(picked_task->burst))
+    {
+      if(cur_task_rr == head_task && cur_task_rr->next == NULL)
+      {
+        cur_task_rr = NULL;
+      }
+      delete_node(&head_task, picked_task);
+
+      return picked_task;
+    }
+  }
+
+  return picked_task;
 }
 
 /**
@@ -441,7 +475,46 @@ Task *pick_next_task_rr()
  */
 void schedule_task_rr()
 {
-  // TODO
+  Task *picked_task;
+  int count_task;
+  float waiting_time_sum;
+  float avg_waiting_time;
+  int last_end_time = 0;
+  
+  count_task = count_node(head_task);
+
+  cur_task_rr = head_task;
+  while((picked_task = pick_next_task_rr()) != NULL)
+  {
+    int slice = get_slice_rr(picked_task->burst);
+    Task *new_sched_task = (Task *)malloc(sizeof(Task));
+    *new_sched_task = *picked_task;
+    //更新调度链表
+    new_sched_task->start_time = last_end_time;
+    new_sched_task->end_time = new_sched_task->start_time + slice;
+    last_end_time = new_sched_task->end_time;
+    insert_node(&head_sched, new_sched_task);
+
+    sub_slice(picked_task, slice);
+    //更新等待时间链表
+    update_waiting_time_node(head_task, picked_task, slice);
+  }
+  printf("\n[RR]\n");
+  print_sched_list(head_sched);
+  print_waiting_time(head_waiting_time);
+
+  struct Node *cur_node = head_waiting_time;
+  while(cur_node != NULL)
+  {
+    waiting_time_sum += (cur_node->task)->waiting_time;
+    cur_node = cur_node->next;
+  }
+  avg_waiting_time = waiting_time_sum / count_task;
+  printf("Average Waiting Time: %.2f\n", avg_waiting_time);
+  
+  //释放所有节点
+  free_all_node(head_sched);
+  free_all_node(head_waiting_time);
 }
 
 // NSJF
@@ -459,8 +532,29 @@ void schedule_task_rr()
  */
 Task *pick_next_task_nsjf(int time)
 {
-  // TODO
-  return NULL;
+  //参数time取当前时间
+  //对在time时间以前到达的任务的执行时间进行比较，取运行时间最少的
+  //每次取完一个，time参数都加上取出的任务的运行时间，取出的任务的节点删掉
+  Task *picked_task;
+  if(head_task == NULL)
+  {
+    return NULL;
+  } else
+  {
+    picked_task = head_task->task;
+  }
+  struct Node *cur_node = head_task;
+  while(cur_node != NULL && (cur_node->task)->arrival_time <= time)
+  {
+    if(min((cur_node->task)->burst, picked_task->burst))
+    {
+      picked_task = cur_node->task;
+      cur_node = cur_node->next;
+    }
+  }
+  delete_node(&head_task, picked_task);
+
+  return picked_task;
 }
 
 /**
@@ -476,7 +570,47 @@ Task *pick_next_task_nsjf(int time)
  */
 void schedule_task_nsjf()
 {
-  // TODO
+  Task *picked_task;
+  int count_task;
+  float waiting_time_sum;
+  float avg_waiting_time;
+  int last_end_time = 0;
+  int time = 0;
+  
+  count_task = count_node(head_task);
+  
+  while((picked_task = pick_next_task_nsjf(time)) != NULL)
+  {
+    int slice = picked_task->burst;
+    time += slice;
+    Task *new_sched_task = (Task *)malloc(sizeof(Task));
+    *new_sched_task = *picked_task;
+    //更新调度链表
+    new_sched_task->start_time = last_end_time;
+    new_sched_task->end_time = new_sched_task->start_time + slice;
+    last_end_time = new_sched_task->end_time;
+    insert_node(&head_sched, new_sched_task);
+
+    //更新等待时间链表
+    update_waiting_time_node(head_task, picked_task, slice);
+  }
+
+  printf("\n[NSJF]\n");
+  print_sched_list(head_sched);
+  print_waiting_time(head_waiting_time);
+
+  struct Node *cur_node = head_waiting_time;
+  while(cur_node != NULL)
+  {
+    waiting_time_sum += (cur_node->task)->waiting_time;
+    cur_node = cur_node->next;
+  }
+  avg_waiting_time = waiting_time_sum / count_task;
+  printf("Average Waiting Time: %.2f\n", avg_waiting_time);
+  
+  //释放所有节点
+  free_all_node(head_sched);
+  free_all_node(head_waiting_time);
 }
 
 // PSJF
