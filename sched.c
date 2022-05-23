@@ -77,6 +77,8 @@ struct Node *cur_task_rr;
 
 struct Node *running_node_psjf;
 
+struct Node *ready_node_psjf;
+
 //函数区域///////////////////////////////////////////////
 /**
  * @brief 初始化链表头
@@ -656,19 +658,19 @@ bool is_delete_node_psjf(int slice, int burst) { return (slice >= burst); }
  */
 Task *pick_next_task_psjf(int time, int *slice)
 {
-  //对在time时间以前到达的任务的运行时间比较大小，time每次加1
-  //取运行时间小的，如果取的任务是当前运行的任务，就剩余运行时间burst减1
-  //如果取的是另一个任务，就判断正在运行的任务是否需要删掉，正在运行的任务的结束时间为time，然后返回新任务
-  //如果没有正在运行的任务，就返回新任务
   Task *picked_task;
+  Task *min_task;
+  struct Node *cur_node;
   if(head_task == NULL)
   {
     return NULL;
-  } else{
+  } else
+  {
     picked_task = head_task->task;
   }
-  struct Node *cur_node = head_task;
-  while(cur_node != NULL && (cur_node->task)->arrival_time <= time)
+
+  cur_node = head_task;
+  while((cur_node != NULL) && ((cur_node->task)->arrival_time <= time))
   {
     if(min((cur_node->task)->burst, picked_task->burst))
     {
@@ -676,20 +678,40 @@ Task *pick_next_task_psjf(int time, int *slice)
     }
     cur_node = cur_node->next;
   }
-  if(running_node_psjf == NULL)
+  cur_node = head_task;
+  min_task = head_task->task;
+  while(cur_node != NULL)
   {
-    return picked_task;
+    if(min((cur_node->task)->burst, min_task->burst))
+    {
+      min_task = cur_node->task;
+    }
+    cur_node = cur_node->next;
   }
-  if((strcmp(picked_task->name, (running_node_psjf->task)->name)) == 0)
+
+  //如果最小的是自己，则运行完，更新slice，更新自己的开始和结束时间，判断是否删除节点并删除，返回这个任务
+  if((strcmp(picked_task->name, min_task->name)) == 0)
   {
-    *slice += 1;
+    *slice += picked_task->burst;
+    picked_task->start_time = time;
+    picked_task->end_time = picked_task->start_time + *slice;
     if(is_delete_node_psjf(*slice, picked_task->burst))
     {
       delete_node(&head_task, picked_task);
+      return picked_task;
     }
+  } else
+  {
+    //如果最小的不是自己，就运行到最小的任务的到达时间，并更新自己的到达时间,当前的开始和结束时间,以及总运行时间
+    *slice += min_task->arrival_time;
+    picked_task->start_time = time;
+    picked_task->end_time = picked_task->start_time + *slice;
+    picked_task->arrival_time = picked_task->end_time;
+    sub_slice(picked_task, *slice);
+
+    return picked_task;
   }
 
-  return picked_task;
 }
 
 /**
@@ -714,54 +736,19 @@ void schedule_task_psjf()
   int time = 0;
   int slice = 0;
 
-  running_node_psjf = head_sched;
   count_task = count_node(head_task);
 
+  //取任务，更新调度链表，更新等待链表，重置slice
   while((picked_task = pick_next_task_psjf(time, &slice)) != NULL)
   {
-    if(running_node_psjf == NULL)
-    {
-      Task *new_sched_task = (Task *)malloc(sizeof(Task));
-      *new_sched_task = *picked_task;
-      new_sched_task->start_time = time;
-      insert_node(&head_sched, new_sched_task);
-      slice = 1;
-    } else
-    {
-      //如果返回的不是当前正运行的任务，新建任务，并且把正在运行的任务执行时间减去已经运行的时间片,并更新等待时间
-      if((strcmp(picked_task->name, (running_node_psjf->task)->name)) != 0)
-      {
-        struct Node *cur_node = head_task;
-        (running_node_psjf->task)->end_time = time;
-        while(cur_node != NULL)
-        {
-          if((strcmp((running_node_psjf->task)->name, (cur_node->task)->name)) == 0)
-          {
-            sub_slice(cur_node->task, slice);
-            update_waiting_time_node(head_task, cur_node->task, slice);
-            break;
-          }
-          cur_node = cur_node->next;
-        }
+    Task *new_sched_task = (Task *)malloc(sizeof(Task));
+    *new_sched_task = *picked_task;
+    insert_node(&head_sched, new_sched_task);
 
-        Task *new_sched_task = (Task *)malloc(sizeof(Task));
-        *new_sched_task = *picked_task;
-        new_sched_task->start_time = time;
-        insert_node(&head_sched, new_sched_task);
-
-        running_node_psjf = running_node_psjf->next;
-        slice = 1;
-      } else
-      {
-        //如果是正在运行的任务，判断是否需要删除，若需要删除，则更新等待时间
-        if(is_delete_node_psjf(slice, picked_task->burst))
-        {
-          update_waiting_time_node(head_task, picked_task, slice);
-        }
-      }
-    }
-
-    time += 1;
+    update_waiting_time_node(head_task, picked_task, slice);
+    
+    time += slice;
+    slice = 0;
   }
 
   printf("\n[PSJF]\n");
